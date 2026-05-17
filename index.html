@@ -4622,10 +4622,20 @@
       map.has(key) || map.set(key, normalized);
     }), Array.from(map.values());
   }
+  function getAppendix8ItemMatchKeys(item = {}) {
+    const rawValues = [ item.description, item.appendix8Text, item.note, item.field, item.name ];
+    return Array.from(new Set(rawValues.map(value => normalizeAppendix8TextKey(value)).filter(Boolean)));
+  }
+  function isAppendix8AliasMatched(aliasKey = "", itemKeys = [], strict = false) {
+    if (!aliasKey || !Array.isArray(itemKeys) || !itemKeys.length) return false;
+    return itemKeys.some(key => key === aliasKey || !strict && key.length >= 8 && aliasKey.length >= 8 && (key.includes(aliasKey) || aliasKey.includes(key)));
+  }
   function getAppendix8ItemsForRow(items = [], row = {}) {
     return uniqueAppendix8Items(items).filter(item => function(row = {}, item = {}) {
-      const detailKey = normalizeTextKey(item.description || ""), noteKey = normalizeTextKey(item.note || ""), aliases = getAppendix8RowAliases(row).map(value => normalizeTextKey(value)).filter(Boolean);
-      return !!aliases.length && (row.matchNote && aliases.includes(noteKey) || aliases.includes(detailKey));
+      const aliases = getAppendix8RowAliases(row).map(value => normalizeAppendix8TextKey(value)).filter(Boolean), itemKeys = getAppendix8ItemMatchKeys(item);
+      if (!aliases.length || !itemKeys.length) return false;
+      const strict = !!row.matchNote;
+      return aliases.some(alias => isAppendix8AliasMatched(alias, itemKeys, strict));
     }(row, item));
   }
   function summarizeAppendix8Items(items = []) {
@@ -4686,26 +4696,52 @@
     stats;
   }
   function getAppendix8PreparedEntriesForRow(preparedEntries = [], row = {}) {
-    const aliases = new Set(getAppendix8RowAliases(row).map(value => normalizeTextKey(value)).filter(Boolean));
-    return aliases.size ? preparedEntries.filter(entry => row.matchNote && aliases.has(entry.noteKey) || aliases.has(entry.detailKey)) : [];
+    const aliases = getAppendix8RowAliases(row).map(value => normalizeAppendix8TextKey(value)).filter(Boolean);
+    return aliases.length ? preparedEntries.filter(entry => aliases.some(alias => isAppendix8AliasMatched(alias, entry.matchKeys || [], !!row.matchNote))) : [];
+  }
+  function getAppendix8SectionFieldAliases(section = {}) {
+    const map = {
+      I: [ FACILITY_PRIMARY_FIELD, "Nhà ở, Trụ sở làm việc, Văn phòng, Đa năng", "Lĩnh vực nhà ở, trụ sở làm việc, văn phòng, nhà đa năng" ],
+      II: [ "Giáo dục", "Lĩnh vực cơ sở giáo dục" ],
+      III: [ "Y tế", "Lĩnh vực cơ sở y tế" ],
+      IV: [ "Văn hóa, Thể thao, Du lịch", "Văn hoá, Thể thao, Du lịch", "Lĩnh vực cơ sở văn hóa, thể thao, du lịch" ],
+      V: [ "Thương mại, Dịch vụ", "Thương mại dịch vụ", "Lĩnh vực cơ sở thương mại dịch vụ" ],
+      VI: [ "Giao thông, Vận tải", "Giao thông vận tải", "Lĩnh vực cơ sở giao thông vận tải" ],
+      VII: [ "Xăng dầu, dầu khí", "Lĩnh vực cơ sở xăng dầu, dầu khí" ],
+      VIII: [ "Năng lượng", "Lĩnh vực cơ sở năng lượng" ],
+      IX: [ "Hóa chất", "Hoá chất", "Lĩnh vực cơ sở hóa chất" ],
+      X: [ "Công nghiệp, Nhà kho", "Công nghiệp nhà kho", "Lĩnh vực cơ sở công nghiệp, nhà kho" ],
+      XI: [ "Lĩnh vực khác", "Cơ sở khác" ]
+    };
+    return map[String(section.code || "").trim()] || [];
+  }
+  function getAppendix8PreparedEntriesForSection(preparedEntries = [], section = {}) {
+    const map = new Map;
+    (section.rows || []).forEach(row => {
+      getAppendix8PreparedEntriesForRow(preparedEntries, row).forEach(entry => {
+        map.has(entry.key) || map.set(entry.key, entry);
+      });
+    });
+    const fieldAliases = getAppendix8SectionFieldAliases(section).map(value => normalizeAppendix8TextKey(value)).filter(Boolean);
+    fieldAliases.length && preparedEntries.forEach(entry => {
+      const fieldKey = normalizeAppendix8TextKey(entry.item?.field || "");
+      fieldKey && fieldAliases.some(alias => isAppendix8AliasMatched(alias, [ fieldKey ], false)) && !map.has(entry.key) && map.set(entry.key, entry);
+    });
+    return Array.from(map.values());
   }
   function buildAppendix8BodyHtml(items = [], options = {}) {
     const printMode = !!options.printMode, cellStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:center;vertical-align:middle;"' : "", nameStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:left;vertical-align:middle;"' : "", sectionStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:left;vertical-align:middle;background:#dbeaf7;font-weight:700;"' : "", sectionCountStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:center;vertical-align:middle;background:#dbeaf7;font-weight:700;"' : "", totalStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:left;vertical-align:middle;background:#b7d7a8;font-weight:700;"' : "", totalCountStyle = printMode ? ' style="border:1px solid #222;padding:4px 5px;text-align:center;vertical-align:middle;background:#b7d7a8;font-weight:700;"' : "", preparedEntries = function(items = []) {
       return uniqueAppendix8Items(items).map(item => ({
         item: item,
         key: item.id || `${item.owner || ""}|${item.code || ""}|${item.name || ""}|${item.address || ""}`,
-        detailKey: normalizeTextKey(item.description || ""),
-        noteKey: normalizeTextKey(item.note || "")
+        detailKey: normalizeAppendix8TextKey(item.description || item.appendix8Text || ""),
+        noteKey: normalizeAppendix8TextKey(item.note || ""),
+        matchKeys: getAppendix8ItemMatchKeys(item)
       }));
     }(items), rows = [];
     FACILITY_APPENDIX8_REPORT_SECTIONS.forEach(section => {
-      const sectionMap = new Map;
-      (section.rows || []).forEach(row => {
-        getAppendix8PreparedEntriesForRow(preparedEntries, row).forEach(entry => {
-          sectionMap.has(entry.key) || sectionMap.set(entry.key, entry);
-        });
-      });
-      const sectionStats = summarizeAppendix8PreparedEntries(Array.from(sectionMap.values()));
+      const sectionEntries = getAppendix8PreparedEntriesForSection(preparedEntries, section);
+      const sectionStats = summarizeAppendix8PreparedEntries(sectionEntries);
       rows.push(`<tr class="appendix8-section-row"><td${sectionCountStyle || ""}>${escapeHtml(section.code)}</td><td class="appendix8-name"${sectionStyle || ""}>${escapeHtml(section.title)}</td>${buildAppendix8StatsCells(sectionStats, {
         cellAttrs: sectionCountStyle
       })}</tr>`), (section.rows || []).forEach((row, index) => {
@@ -4737,13 +4773,12 @@
     const rows = [];
     return FACILITY_APPENDIX8_REPORT_SECTIONS.forEach(section => {
       const sectionItems = function(items = [], section = {}) {
-        const map = new Map;
-        return (section.rows || []).forEach(row => {
-          getAppendix8ItemsForRow(items, row).forEach(item => {
-            const key = item.id || `${item.owner || ""}|${item.code || ""}|${item.name || ""}|${item.address || ""}`;
-            map.has(key) || map.set(key, item);
-          });
-        }), Array.from(map.values());
+        const preparedEntries = uniqueAppendix8Items(items).map(item => ({
+          item: item,
+          key: item.id || `${item.owner || ""}|${item.code || ""}|${item.name || ""}|${item.address || ""}`,
+          matchKeys: getAppendix8ItemMatchKeys(item)
+        }));
+        return getAppendix8PreparedEntriesForSection(preparedEntries, section).map(entry => entry.item);
       }(items, section);
       rows.push([ section.code, section.title, ...getAppendix8StatsArray(summarizeAppendix8Items(sectionItems)) ]), 
       (section.rows || []).forEach((row, index) => {
@@ -5962,7 +5997,7 @@
     return "Đã mua bảo hiểm cháy, nổ" === normalizedStatus || "Chưa mua bảo hiểm cháy, nổ" !== normalizedStatus && normalizeFacilityBoolean(fallbackValue);
   }
   function buildFacilityCode(raw = {}) {
-    return String(raw.code || raw.facilityCode || raw.maCoSo || raw.facility_code || "").trim();
+    return String(pickRawFacilityValue(raw, [ "code", "facilityCode", "maCoSo", "ma_co_so", "facility_code", "Mã cơ sở", "Ma co so" ]) || "").trim();
   }
   function normalizeFacilityHistory(rawHistory) {
     if (Array.isArray(rawHistory)) return rawHistory.map(item => ({
@@ -5987,24 +6022,37 @@
     }
     return [];
   }
+  function pickRawFacilityValue(raw = {}, keys = []) {
+    for (const key of keys) {
+      if (!key) continue;
+      const value = raw && Object.prototype.hasOwnProperty.call(raw, key) ? raw[key] : void 0;
+      if (value === 0 || value === false) return value;
+      if (value !== void 0 && value !== null && String(value).replace(/\u00a0/g, " ").trim()) return value;
+    }
+    return "";
+  }
+  function normalizeAppendix8TextKey(value) {
+    return normalizeDuplicateTextKey(String(value || "").replace(/㎡/g, "m2").replace(/m²/gi, "m2").replace(/m²/gi, "m2").replace(/ /g, " ").replace(/[;；]/g, ","));
+  }
   function normalizeFacility(raw = {}) {
     return {
       id: String(raw.id || makeId()).trim(),
       code: buildFacilityCode(raw),
-      fileNumber: String(raw.fileNumber || raw.soHoSo || raw.so_ho_so || raw.hoSoNumber || raw.dossierNumber || "").trim(),
-      createDate: toInputDateValue(raw.createDate || raw.ngayLap || raw.establishedDate),
-      registrationDate: toInputDateValue(raw.registrationDate || raw.ngayDangKy || raw.registerDate),
-      name: String(raw.name || "").trim(),
-      description: normalizeFacilityDetailValue(raw.description || raw.moTa || ""),
-      note: String(raw.note || raw.ghiChu || raw.ghi_chu || raw.facilityNote || raw.noteContent || "").trim(),
-      pcccForce: String(raw.pcccForce || raw.lucLuongPcccTaiCho || raw.localPcccForce || raw.firefightingForce || "").trim(),
-      pcccPeopleCount: normalizeFacilityNumberText(raw.pcccPeopleCount || raw.soNguoiPcccTaiCho || raw.localPcccPeopleCount || raw.firefightingPeopleCount || ""),
-      fireInsuranceStatus: normalizeFacilityFireInsuranceStatus(raw.fireInsuranceStatus ?? raw.trangThaiBaoHiemChayNo ?? raw.baoHiemChayNoStatus ?? raw.baoHiemChayNo ?? "", raw.fireInsurancePurchased ?? raw.daMuaBaoHiemChayNo ?? raw.fireInsuranceBought ?? raw.hasFireInsurance ?? ""),
-      fireInsurancePurchased: isFacilityFireInsurancePurchasedFromStatus(raw.fireInsuranceStatus ?? raw.trangThaiBaoHiemChayNo ?? raw.baoHiemChayNoStatus ?? raw.baoHiemChayNo ?? "", raw.fireInsurancePurchased ?? raw.daMuaBaoHiemChayNo ?? raw.fireInsuranceBought ?? raw.hasFireInsurance ?? !1),
-      appraisalScope: normalizeFacilityAppraisalScope(raw.appraisalScope ?? raw.thamDuyetThamDinhNghiemThu ?? raw.tdtdntScope ?? raw.appraisalRequired ?? raw.appraisalScopeValue ?? ""),
-      appraisalStatus: normalizeFacilityAppraisalStatus(raw.appraisalStatus ?? raw.tinhTrangTdtdnt ?? raw.tdtdntStatus ?? raw.appraisalResult ?? raw.appraisalStatusValue ?? "", raw.appraisalScope ?? raw.thamDuyetThamDinhNghiemThu ?? raw.tdtdntScope ?? raw.appraisalRequired ?? raw.appraisalScopeValue ?? ""),
-      address: String(raw.address || "").trim(),
-      field: normalizeFacilityFieldValue(raw.field || raw.linhVuc || raw.category || ""),
+      fileNumber: String(pickRawFacilityValue(raw, [ "fileNumber", "soHoSo", "so_ho_so", "hoSoNumber", "dossierNumber", "Số hồ sơ" ]) || "").trim(),
+      createDate: toInputDateValue(pickRawFacilityValue(raw, [ "createDate", "ngayLap", "ngay_lap", "establishedDate", "Ngày lập" ])),
+      registrationDate: toInputDateValue(pickRawFacilityValue(raw, [ "registrationDate", "ngayDangKy", "ngay_dang_ky", "registerDate", "Ngày đăng ký" ])),
+      name: String(pickRawFacilityValue(raw, [ "name", "tenCoSo", "ten_co_so", "facilityName", "Tên cơ sở" ]) || "").trim(),
+      description: normalizeFacilityDetailValue(pickRawFacilityValue(raw, [ "description", "moTa", "mota", "loaiHinhChiTiet", "loai_hinh_chi_tiet", "loaiHinh", "loai_hinh", "loaiHinhCoSo", "loai_hinh_co_so", "facilityDescription", "facilityType", "type", "detail", "categoryDetail", "danhMucCoSo", "danh_muc_co_so", "tenDanhMuc", "ten_danh_muc", "Tên danh mục", "Danh mục cơ sở", "Loại hình chi tiết", "Loại hình", "Mô tả" ])),
+      appendix8Text: String(pickRawFacilityValue(raw, [ "appendix8Text", "description", "moTa", "mota", "loaiHinhChiTiet", "loai_hinh_chi_tiet", "loaiHinh", "loai_hinh", "loaiHinhCoSo", "loai_hinh_co_so", "facilityDescription", "facilityType", "type", "detail", "categoryDetail", "danhMucCoSo", "danh_muc_co_so", "tenDanhMuc", "ten_danh_muc", "Tên danh mục", "Danh mục cơ sở", "Loại hình chi tiết", "Loại hình", "Mô tả" ]) || "").trim(),
+      note: String(pickRawFacilityValue(raw, [ "note", "ghiChu", "ghi_chu", "facilityNote", "noteContent", "Ghi chú" ]) || "").trim(),
+      pcccForce: String(pickRawFacilityValue(raw, [ "pcccForce", "lucLuongPcccTaiCho", "luc_luong_pccc_tai_cho", "localPcccForce", "firefightingForce", "Lực lượng PCCC tại chỗ" ]) || "").trim(),
+      pcccPeopleCount: normalizeFacilityNumberText(pickRawFacilityValue(raw, [ "pcccPeopleCount", "soNguoiPcccTaiCho", "so_nguoi_pccc_tai_cho", "localPcccPeopleCount", "firefightingPeopleCount", "soDoiVien", "so_doi_vien", "Số người", "Số đội viên" ])),
+      fireInsuranceStatus: normalizeFacilityFireInsuranceStatus(pickRawFacilityValue(raw, [ "fireInsuranceStatus", "trangThaiBaoHiemChayNo", "baoHiemChayNoStatus", "baoHiemChayNo", "bao_hiem_chay_no", "Bảo hiểm cháy, nổ" ]), pickRawFacilityValue(raw, [ "fireInsurancePurchased", "daMuaBaoHiemChayNo", "fireInsuranceBought", "hasFireInsurance", "Đã mua bảo hiểm cháy, nổ" ])),
+      fireInsurancePurchased: isFacilityFireInsurancePurchasedFromStatus(pickRawFacilityValue(raw, [ "fireInsuranceStatus", "trangThaiBaoHiemChayNo", "baoHiemChayNoStatus", "baoHiemChayNo", "bao_hiem_chay_no", "Bảo hiểm cháy, nổ" ]), pickRawFacilityValue(raw, [ "fireInsurancePurchased", "daMuaBaoHiemChayNo", "fireInsuranceBought", "hasFireInsurance", "Đã mua bảo hiểm cháy, nổ" ]) || !1),
+      appraisalScope: normalizeFacilityAppraisalScope(pickRawFacilityValue(raw, [ "appraisalScope", "thamDuyetThamDinhNghiemThu", "tdtdntScope", "appraisalRequired", "appraisalScopeValue", "Thẩm duyệt, thẩm định, nghiệm thu" ])),
+      appraisalStatus: normalizeFacilityAppraisalStatus(pickRawFacilityValue(raw, [ "appraisalStatus", "tinhTrangTdtdnt", "tdtdntStatus", "appraisalResult", "appraisalStatusValue", "Tình trạng TD, TĐ, NT" ]), pickRawFacilityValue(raw, [ "appraisalScope", "thamDuyetThamDinhNghiemThu", "tdtdntScope", "appraisalRequired", "appraisalScopeValue", "Thẩm duyệt, thẩm định, nghiệm thu" ])),
+      address: String(pickRawFacilityValue(raw, [ "address", "diaChi", "dia_chi", "Địa chỉ" ]) || "").trim(),
+      field: normalizeFacilityFieldValue(pickRawFacilityValue(raw, [ "field", "linhVuc", "linh_vuc", "category", "categoryName", "sector", "facilityField", "Lĩnh vực" ])),
       area: normalizeFacilityNumberText(raw.area || raw.dienTich || raw.dien_tich || raw.areaM2 || raw.dienTichM2 || ""),
       floorCount: normalizeFacilityNumberText(raw.floorCount || raw.soTang || raw.so_tang || raw.numberOfFloors || raw.floors || ""),
       floorArea: normalizeFacilityNumberText(raw.floorArea || raw.tongDienTichSan || raw.tong_dien_tich_san || raw.totalFloorArea || raw.grossFloorArea || ""),
@@ -6015,22 +6063,22 @@
       gasAmount: normalizeFacilityNumberText(raw.gasAmount || raw.tongLuongKhiDot || raw.tong_luong_khi_dot || raw.gasStorageAmount || raw.gasAmountKg || ""),
       voltageLevel: String(raw.voltageLevel || raw.dienAp || raw.dien_ap || raw.voltage || raw.voltageKv || "").trim(),
       buildingVolume: normalizeFacilityNumberText(raw.buildingVolume || raw.khoiTich || raw.khoi_tich || raw.volume || raw.volumeM3 || raw.cubicVolume || ""),
-      appendix: normalizeFacilityAppendix(raw.appendix || ""),
-      inspectionDate: toInputDateValue(raw.inspectionDate),
-      insurance: String(raw.insurance || "").trim(),
-      maintenance: String(raw.maintenance || "").trim(),
+      appendix: normalizeFacilityAppendix(pickRawFacilityValue(raw, [ "appendix", "phanLoai", "phan_loai", "nhom", "nhóm", "group", "classification", "facilityGroup", "Phân loại", "Nhóm" ])),
+      inspectionDate: toInputDateValue(pickRawFacilityValue(raw, [ "inspectionDate", "ngayKiemTra", "ngay_kiem_tra", "Ngày kiểm tra" ])),
+      insurance: String(pickRawFacilityValue(raw, [ "insurance", "insuranceDate", "ngayMuaBaoHiem", "ngay_mua_bao_hiem", "Ngày mua bảo hiểm" ]) || "").trim(),
+      maintenance: String(pickRawFacilityValue(raw, [ "maintenance", "maintenanceDate", "ngayBaoDuong", "ngay_bao_duong", "Ngày bảo dưỡng" ]) || "").trim(),
       materialPurchaseDate: getFacilityMaterialMetaValue(raw),
       materialVendor: String(raw.materialVendor || raw.donViBanVatTu || raw.materialSupplier || raw.supplier || "").trim(),
       coordinationRegulation: String(raw.coordinationRegulation || raw.quyChePhoiHop || raw.coordinationRule || raw.regulation || "").trim(),
-      drill: toInputDateValue(raw.drill || raw.ngayThucTap || raw.drillDate),
-      training: toInputDateValue(raw.training || raw.ngayBoiDuong || raw.trainingDate),
-      trainingPeopleCount: String(raw.trainingPeopleCount || raw.trainingCount || raw.soNguoiBoiDuong || raw.soNguoi || raw.peopleCount || raw.participantCount || raw.attendeeCount || "").trim(),
+      drill: toInputDateValue(pickRawFacilityValue(raw, [ "drill", "ngayThucTap", "ngay_thuc_tap", "drillDate", "Ngày thực tập" ])),
+      training: toInputDateValue(pickRawFacilityValue(raw, [ "training", "ngayBoiDuong", "ngay_boi_duong", "trainingDate", "Ngày bồi dưỡng" ])),
+      trainingPeopleCount: String(pickRawFacilityValue(raw, [ "trainingPeopleCount", "trainingCount", "soNguoiBoiDuong", "so_nguoi_boi_duong", "soNguoi", "peopleCount", "participantCount", "attendeeCount", "Số người bồi dưỡng" ]) || "").trim(),
       issueType: normalizeFacilityIssueType(raw.issueType || raw.loaiTonTai || raw.tonTaiType || raw.violationType || ""),
       suspended: normalizeFacilityBoolean(raw.suspended ?? raw.dinhChi ?? raw.dinh_chi ?? raw.isSuspended ?? raw.suspension ?? raw.tamDinhChi ?? ""),
       issueContent: String(raw.issueContent || raw.noiDungTonTai || raw.tonTaiContent || raw.violationContent || "").trim(),
       issueProgress: String(raw.issueProgress || raw.tienDoKhacPhuc || raw.tonTaiProgress || raw.remediationProgress || "").trim(),
       issueDifficulty: String(raw.issueDifficulty || raw.khoKhan || raw.tonTaiDifficulty || raw.difficulty || raw.issueObstacle || "").trim(),
-      owner: String(raw.owner || raw.ownerManager || raw.manager || "").trim(),
+      owner: String(pickRawFacilityValue(raw, [ "owner", "ownerManager", "manager", "managerName", "nguoiQuanLy", "nguoi_quan_ly", "canBoQuanLy", "can_bo_quan_ly", "donViQuanLy", "don_vi_quan_ly", "unit", "team", "Người quản lý", "Đơn vị quản lý", "Cán bộ quản lý" ]) || "").trim(),
       editHistory: normalizeFacilityHistory(raw.editHistory || raw.history || raw.lichSuChinhSua || raw.edit_history || raw.EDIT_HISTORY || raw.HISTORY || raw.editHistoryJson),
       createdAt: String(raw.createdAt || (new Date).toISOString()).trim(),
       updatedAt: String(raw.updatedAt || raw.createdAt || (new Date).toISOString()).trim()
@@ -9270,8 +9318,11 @@
     }), renderReportIssueTable(state.reportFacilities), setFacilityStatus("success", "Đã lưu và đồng bộ cập nhật tồn tại cơ sở thành công.");
   }
   async function loadReportDashboard(forceRemote = !1) {
-    const reportTitle = $("reportTitle"), reportHint = $("reportIssueHint"), managerName = getCurrentFacilityManager(), isTeamReport = shouldShowReportAnalysisPanels(managerName), cacheKeyName = managerName, localPool = dedupeFacilities(isTeamReport ? [ ...Array.isArray(state.reportFacilities) ? state.reportFacilities : [], ...getFacilityCache("Cơ sở Đội 2"), ...Array.isArray(state.facilities) && isTeamFacilityView(state.currentFacilityManager) ? state.facilities : [] ] : [ ...Array.isArray(state.reportFacilities) ? state.reportFacilities : [], ...getFacilityCache(managerName), ...Array.isArray(state.facilities) && state.currentFacilityManager === managerName ? state.facilities : [] ]), applyReportItems = (items, source = "") => {
-      const normalized = dedupeFacilities(items || []);
+    const reportTitle = $("reportTitle"), reportHint = $("reportIssueHint"), managerName = getCurrentFacilityManager(), isTeamReport = shouldShowReportAnalysisPanels(managerName), cacheKeyName = managerName, localPool = dedupeFacilities(isTeamReport ? [ ...Array.isArray(state.reportFacilities) ? state.reportFacilities : [], ...getFacilityCache(managerName), ...getFacilityCache("Cơ sở Đội 2"), ...getFacilityLeafManagers(managerName).flatMap(name => getFacilityCache(name)), ...getFacilityLeafManagers(managerName).flatMap(name => loadLocalFacilities(name)), ...Array.isArray(state.facilities) && isTeamFacilityView(state.currentFacilityManager) ? state.facilities : [] ] : [ ...Array.isArray(state.reportFacilities) ? state.reportFacilities : [], ...getFacilityCache(managerName), ...Array.isArray(state.facilities) && state.currentFacilityManager === managerName ? state.facilities : [] ]), applyReportItems = (items, source = "") => {
+      const normalized = dedupeFacilities(items || []).filter(item => {
+        const owner = String(item.owner || "").trim();
+        return !isTeamReport || !owner || getFacilityLeafManagers(managerName).includes(owner);
+      });
       return state.reportFacilities = normalized, source && (state.reportSource = source), 
       reportTitle && (reportTitle.textContent = getReportViewTitle(managerName)), function() {
         const items = dedupeFacilities(Array.isArray(state.reportFacilities) ? state.reportFacilities : []);
